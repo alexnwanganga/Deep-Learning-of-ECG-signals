@@ -11,25 +11,32 @@ import csv
 import os
 import shutil
 
-# Determines path to orgin as well as each destination
-folder_A = '/Users/mateo/Downloads/ECGs_training2017/Class_A'
-folder_N = '/Users/mateo/Downloads/ECGs_training2017/Class_N'
-folder_O = '/Users/mateo/Downloads/ECGs_training2017/Class_O'
-source_dir = '/Users/mateo/Downloads/ECGs_training2017'
+#/Users/mateo/Repos/Deep-Learning-of-ECG-signals
 
-for i in range(0, 9):
+# Determines path to orgin as well as each destination
+folder_A = '/Users/mateo/Repos/Deep-Learning-of-ECG-signals/Data/Class_A'
+folder_N = '/Users/mateo/Repos/Deep-Learning-of-ECG-signals/Data/Class_N'
+folder_O = '/Users/mateo/Repos/Deep-Learning-of-ECG-signals/Data/Class_O'
+source_dir = '/Users/mateo/Repos/Deep-Learning-of-ECG-signals/Data'
+ref_dir = '/Users/mateo/Repos/Deep-Learning-of-ECG-signals/References'
+
+for i in range(8000, 9000):
     #Declares file name in each cycle 
     file_name = f'A{i+1:05d}'
     
+    #Path to Header and Data files
+    data_path = os.path.join(source_dir, file_name)
+    
     try:
-  
+        
+        
         #Reads header file 
-        header = wfdb.rdheader(file_name)
+        header = wfdb.rdheader(data_path)
         print(f"Header of file: {file_name}:")
         print(header)
         
         #Reads data file 
-        record = wfdb.rdrecord(file_name)
+        record = wfdb.rdrecord(data_path)
         print(f"Signal Data of file: {file_name}:")
         print(record)
         
@@ -44,8 +51,8 @@ for i in range(0, 9):
         
         #Scans through csv file data 
         
-        #Scans thru new line 
-        with open ('REFERENCE.csv', newline = '') as csvfile:
+        #Finds path to reference file and scans thru new line in reference file 
+        with open (os.path.join(ref_dir, 'REFERENCE.csv'), newline = '') as csvfile:
             csv_reader = csv.reader(csvfile)
             for row in csv_reader:
                 file_id, category = row
@@ -67,7 +74,7 @@ for i in range(0, 9):
                     source_path_hea = os.path.join(source_dir, f'{file_name}.hea')
                     dest_path_hea = os.path.join(target_dir, f'{file_name}.hea')
                     
-                    # Moves the .mat file to the target directory
+                    # Moves the .mat and .hea file to the target directory
                     if os.path.exists(source_path_mat):
                         shutil.move(source_path_mat, dest_path_mat)
                         shutil.move(source_path_hea, dest_path_hea)
