@@ -13,16 +13,17 @@ import shutil
 
 #/Users/mateo/Repos/Deep-Learning-of-ECG-signals
 
-# Determines path to orgin as well as each destination
+# Determines path to orgin as well as each destination  
 folder_A = '/Users/mateo/Repos/Deep-Learning-of-ECG-signals/Data/Class_A'
 folder_N = '/Users/mateo/Repos/Deep-Learning-of-ECG-signals/Data/Class_N'
 folder_O = '/Users/mateo/Repos/Deep-Learning-of-ECG-signals/Data/Class_O'
 source_dir = '/Users/mateo/Repos/Deep-Learning-of-ECG-signals/Data'
 ref_dir = '/Users/mateo/Repos/Deep-Learning-of-ECG-signals/References'
 
-for i in range(8000, 9000):
+# Total number of files is 8528
+for i in range(0, 10):
     #Declares file name in each cycle 
-    file_name = f'A{i+1:05d}'
+    file_name = f'A{i+1:05d}' 
     
     #Path to Header and Data files
     data_path = os.path.join(source_dir, file_name)
