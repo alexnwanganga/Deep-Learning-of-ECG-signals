@@ -4,25 +4,7 @@ import pandas as pd
 import scipy.io
 import os
 import wfdb
-import random
 
-#---------------------------CNN Libraries---------------------------------------------------------
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, accuracy_score, roc_auc_score, average_precision_score
-from torch.utils.data import DataLoader, TensorDataset, random_split
-import time
-
-#---------------------------Hyper-parameter Tuniung Libraries---------------------------------------------------------
-
-from skopt import gp_minimize
-from skopt.space import Real, Integer
-from skopt.utils import use_named_args
 
 #--------------------------Read and Combine Funtions----------------------------------------------------------
 
@@ -66,16 +48,7 @@ def combine_data(folder_paths):
     labelSeries = pd.Series(all_labels, name='label')
 
     return dataFrame, labelSeries
-    
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+
 
 #---------------------------------Defining Database Structure---------------------------------------------------
 
@@ -87,7 +60,7 @@ folder_paths = [
 
 # Combine data
 dataFrame, labelSeries = combine_data(folder_paths)
- 
+
 # Verify that DataFrame and Series are created properly
 print(f"DataFrame shape: {dataFrame.shape}")
 print(f"Label Series shape: {labelSeries.shape}")
@@ -96,7 +69,7 @@ print(f"Label Series shape: {labelSeries.shape}")
 dataFrame = pd.concat([labelSeries, dataFrame], axis=1)
 
 # Randomize the rows in the DataFrame
-dataFrame = dataFrame.sample(frac=1, random_state=43).reset_index(drop=True)
+dataFrame = dataFrame.sample(frac=1).reset_index(drop=True)
 
 # Verify the combined DataFrame
 print(f"Combined and randomized DataFrame shape: {dataFrame.shape}")
@@ -125,10 +98,10 @@ import time
 # --- Train and Test split manually (test with patient 233 and 234 ECG windows) ---
 # --- Dataset: Previously sectioned ECG recordings into 2-second (360 Hz) windows ---
 
-train = dataFrame.iloc[0:3000] 
-test = dataFrame.iloc[3001:]
+train = dataFrame.iloc[0:2000] 
+test = dataFrame.iloc[2001:]
 
-sub_timewindow = 960
+sub_timewindow = 1000
 
 # Print the shape of train to understand its dimensions
 print("Shape of train DataFrame:", train.shape)
@@ -150,18 +123,13 @@ Y_train_tensor = torch.tensor(Y_train, dtype=torch.float32)
 Y_test_tensor = torch.tensor(Y_test, dtype=torch.float32)
 
 # --- Create training and validation sets ---
-
-# Set a seed value
-seed = 43
-set_seed(seed)
-
 # Split the training set into training and validation
 val_split = 0.2
 train_size = int((1 - val_split) * len(X_train_tensor))
 val_size = len(X_train_tensor) - train_size
 train_dataset, val_dataset = random_split(TensorDataset(X_train_tensor, Y_train_tensor), [train_size, val_size])
 
-# DataLoaders for training, validation, and test setsr
+# DataLoaders for training, validation, and test sets
 batch_size = 16
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
@@ -176,15 +144,14 @@ print(f"Testing set size: {len(test_loader.dataset)}")
 
 # Define the model architecture in PyTorch
 class ECGModel(nn.Module):
-    def __init__(self, num_filters, kernel_size, dropout_rate): # Allows for inout of hyperparameter changes
+    def __init__(self):
         super(ECGModel, self).__init__()
-        self.conv1 = nn.Conv1d(in_channels=1, out_channels=num_filters, kernel_size=kernel_size)
-        self.conv2 = nn.Conv1d(in_channels=num_filters, out_channels=num_filters*2, kernel_size=kernel_size)
+        self.conv1 = nn.Conv1d(in_channels=1, out_channels=16, kernel_size=10)
+        self.conv2 = nn.Conv1d(in_channels=16, out_channels=32, kernel_size=10)
         self.pool = nn.MaxPool1d(3)
-        self.conv3 = nn.Conv1d(in_channels=num_filters*2, out_channels=num_filters*4, kernel_size=kernel_size)
+        self.conv3 = nn.Conv1d(in_channels=32, out_channels=64, kernel_size=10)
         self.global_avg_pool = nn.AdaptiveAvgPool1d(1)  # Equivalent to GlobalAveragePooling1D
-        self.dropout = nn.Dropout(p=dropout_rate)
-        self.fc = nn.Linear(num_filters*4, 1)
+        self.fc = nn.Linear(64, 1)
     
     def forward(self, x):
         x = x.view(x.size(0), 1, -1)  # Reshape to (batch_size, channels, sequence_length)
@@ -195,115 +162,9 @@ class ECGModel(nn.Module):
         x = self.global_avg_pool(x).squeeze(-1)
         x = torch.sigmoid(self.fc(x))
         return x
-    
-#---------------------------------Define Space---------------------------------------------------
-
-space = [
-    Integer(8, 128, name='num_filters'),
-    Integer(3, 7, name='kernel_size'),
-    Real(1e-5, 1e-2, "log-uniform", name='learning_rate'),
-    Real(0.1, 0.5, name='dropout_rate'),
-    Integer(8, 128, name='batch_size')
-]
-
-#---------------------------------Determining Hyperparameters---------------------------------------------------
-
-# Define the objective function
-@use_named_args(space)
-def objective(**params):
-    num_filters = params['num_filters']
-    kernel_size = params['kernel_size']
-    learning_rate = params['learning_rate']
-    dropout_rate = params['dropout_rate']
-    batch_size = params['batch_size']
-
-    # Print parameters for debugging
-    print(f'Params: {params}')
-
-    # Check if batch_size is valid
-    if not isinstance(batch_size, int) or batch_size <= 0:
-        return -1e10
-
-    # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
-    # Create model
-    model = ECGModel(num_filters, kernel_size, dropout_rate).to(device)
-    criterion = nn.BCELoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
-    # Training loop
-    epochs = 100
-    for epoch in range(epochs):
-        model.train()
-        running_train_loss = 0.0
-        for inputs, labels in train_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs.squeeze(), labels)
-            loss.backward()
-            optimizer.step()
-            running_train_loss += loss.item()
-        
-        avg_train_loss = running_train_loss / len(train_loader)
-
-    # Validation
-    model.eval()
-    y_true, y_pred = [], []
-    with torch.no_grad():
-        for inputs, labels in val_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
-            y_true.extend(labels.cpu().numpy())
-            y_pred.extend(outputs.squeeze().cpu().numpy())
-    
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
-    auroc = roc_auc_score(y_true, y_pred)
-    auprc = average_precision_score(y_true, y_pred)
-
-    # Check for large values
-    if np.isnan(auroc) or np.isnan(auprc) or np.isinf(auroc) or np.isinf(auprc):
-        return -1e10  # Assign a large negative value if nan or inf is encountered
-    # print('AUROC: ', auroc)
-    # print('AUPRC: ', auprc)
-    # Return the negative value since we want to maximize these scores
-    return -(auroc + auprc)
-
-# Device configuration
-
-# Check for MPS availability 
-if torch.backends.mps.is_available():
-    device = torch.device("mps")
-else:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-# Perform Bayesian Optimization
-res = gp_minimize(objective, space, n_calls=50, random_state=42)
-
-#---------------------------------Training and Validation Loop---------------------------------------------------
-# Best parameters
-best_params = res.x
-print(f'Best parameters: {best_params}')
-
-# Use the best parameters to retrain the model on the entire training set
-num_filters = best_params[0]
-kernel_size = best_params[1]
-learning_rate = best_params[2]
-dropout_rate = best_params[3]
-batch_size = int(best_params[4])
-
-# Create data loaders with the best batch size
-train_loader = DataLoader(TensorDataset(X_train_tensor, Y_train_tensor), batch_size=batch_size, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-test_loader = DataLoader(TensorDataset(X_test_tensor, Y_test_tensor), batch_size=batch_size, shuffle=False)
-
 
 # Model instance
-model = ECGModel(num_filters, kernel_size, dropout_rate).to(device)
+model = ECGModel()
 print(model)
 
 # Define loss function and optimizer
@@ -318,19 +179,6 @@ print(f"Neural network hyperparameters:\n- Number of layers: 3 convolutional lay
 # Epochs was 100
 epochs = 20
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# Epochs was 100
-epochs = 250
-patience = 30 # Number of ecpoch program will wait for before stopping
-best_val_loss = float('inf')
-epochs_of_no_improve = 0
-early_stop = False 
-
-# Check for MPS availability 
-if torch.backends.mps.is_available():
-    device = torch.device("mps")
-else:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 model.to(device)
 
 train_losses, val_losses = [], []
@@ -366,22 +214,6 @@ for epoch in range(epochs):
     
     print(f'Epoch {epoch+1}/{epochs}, Training Loss: {avg_train_loss:.4f}, Validation Loss: {avg_val_loss:.4f}')
 
-    # Determine whether or not to implement an Early Stop
-    if avg_val_loss < best_val_loss:
-        best_val_loss = avg_val_loss
-        epochs_no_improve = 0
-    else:
-        epochs_no_improve += 1
-    
-    if epochs_no_improve >= patience:
-        print(f'Early stopping at epoch {epoch+1}')
-        early_stop = True
-        break
-
- # Message to show how many epochs were completed before stopping   
-if not early_stop:
-    print(f'Training completed after {epochs} epochs')
-
 
 # ---------------------------------- Plot Training and Validation Loss ----------------------------------
 
@@ -389,9 +221,6 @@ plt.figure(figsize=(10, 5))
 plt.plot(range(1, epochs + 1), train_losses, label='Training Loss')
 plt.plot(range(1, epochs + 1), val_losses, label='Validation Loss')
 plt.xlabel('Epochs', fontsize = 14)
-plt.plot(range(1, len(train_losses) + 1), train_losses, label='Training Loss')
-plt.plot(range(1, len(train_losses) + 1), val_losses, label='Validation Loss')
-plt.xlabel('Epochs',fontsize = 14)
 plt.ylabel('Loss', fontsize = 14)
 plt.axvline(x=40, color='r', linestyle='--', alpha=0.5)
 
@@ -414,8 +243,6 @@ plt.legend(fontsize = 14)
 plt.show()
 
 # ------------------------------------- Evaluation on Test Set -------------------------------------
-import matplotlib.pyplot as plt
-from sklearn.metrics import roc_curve, precision_recall_curve
 
 model.eval()
 y_pred = []
@@ -448,9 +275,6 @@ print(f'Recall: {recall:.4f}')
 print(f'F1 Score: {f1:.4f}')
 print(f'AUROC: {auroc:.4f}')
 print(f'AUPRC: {auprc:.4f}')
-
-# Ensure the backend is set to a displayable one
-plt.switch_backend('TkAgg')  # Use a GUI backend suitable for your environment
 
 # ---------------------------------- Plot AUROC and AUPRC curves ----------------------------------
 
